@@ -382,7 +382,7 @@ const LancamentoPrevisaoSemanalPage: React.FC = () => {
   const edicaoPermitida = useMemo(() => {
     const selecionadaData = new Date(`${semanaSelecionada}T00:00:00`);
     const atual = new Date(`${currentMondayIso}T00:00:00`);
-    return selecionadaData.getTime() > atual.getTime();
+    return selecionadaData.getTime() >= atual.getTime();
   }, [semanaSelecionada]);
 
   const categoriasExistentes = useMemo(() => {
@@ -1968,7 +1968,7 @@ const LancamentoPrevisaoSemanalPage: React.FC = () => {
 
             {!edicaoPermitida && (
               <div className="rounded-md border border-warning-200 bg-warning-50 px-4 py-3 text-sm text-warning-800">
-                A edição está bloqueada para a semana selecionada. Somente semanas futuras podem ser importadas.
+                A edição está bloqueada para semanas passadas. Somente a semana corrente e semanas futuras podem ser importadas.
               </div>
             )}
 

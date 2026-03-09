@@ -14,6 +14,7 @@ import { getUserSession } from '@/lib/userSession';
 import { evaluateMath, formatCurrency } from '@/lib/mathParser';
 import { traduzirErroSupabase } from '@/lib/supabaseErrors';
 import { dataLiberadaParaEdicao } from '@/lib/verificarPeriodoLiberado';
+import { recalcularSaldoDiario } from '@/lib/recalcularSaldoDiario';
 
 type Mensagem = { tipo: 'sucesso' | 'erro' | 'info'; texto: string };
 type Processo = 'area' | 'receita' | 'banco' | 'saldo';
@@ -640,6 +641,38 @@ const SaldoDiarioPage: React.FC = () => {
     }
   };
 
+  /**
+   * Dispara o recálculo de sdd_saldo_diario a partir da data de referência.
+   * Executado em background após cada operação de gravação para manter os
+   * relatórios sempre atualizados sem intervenção manual.
+   */
+  const atualizarSaldoDiarioAutomaticamente = useCallback(
+    async (dataRef: string) => {
+      if (!usuario) return;
+      try {
+        const supabase = getSupabaseClient();
+        await recalcularSaldoDiario(supabase, usuario.usr_id, dataRef);
+      } catch (err) {
+        // Falha silenciosa: o recálculo é uma conveniência, não deve bloquear o fluxo principal
+        console.warn('Aviso: não foi possível atualizar saldos diários automaticamente:', err);
+      }
+    },
+    [usuario],
+  );
+
+  /**
+   * Recarrega os dados da tela e recalcula os saldos diários em seguida.
+   * Deve ser usado após qualquer operação de escrita (inserção, edição, exclusão).
+   */
+  const recarregarERecalcular = useCallback(
+    async (dataRef: string) => {
+      await carregarMovimentacoes(dataRef);
+      // Dispara recálculo em background (não bloqueia a UI)
+      atualizarSaldoDiarioAutomaticamente(dataRef);
+    },
+    [carregarMovimentacoes, atualizarSaldoDiarioAutomaticamente],
+  );
+
   const handleRegistrarPagamentosArea = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (!usuario) return;
@@ -745,7 +778,7 @@ const SaldoDiarioPage: React.FC = () => {
             ? 'Pagamentos por área registrados.'
             : `Pagamentos por área salvos (${mensagemPartes.join(' e ')}).`,
       });
-      await carregarMovimentacoes(dataReferencia);
+      await recarregarERecalcular(dataReferencia);
     } catch (error) {
       console.error('Erro ao registrar pagamento por área:', error);
       atualizarMensagem('area', {
@@ -865,7 +898,7 @@ const SaldoDiarioPage: React.FC = () => {
             ? 'Receitas registradas com sucesso.'
             : `Receitas salvas (${mensagemPartes.join(' e ')}).`,
       });
-      await carregarMovimentacoes(dataReferencia);
+      await recarregarERecalcular(dataReferencia);
     } catch (error) {
       console.error('Erro ao registrar receitas:', error);
       atualizarMensagem('receita', {
@@ -985,7 +1018,7 @@ const SaldoDiarioPage: React.FC = () => {
             ? 'Pagamentos bancários registrados.'
             : `Pagamentos bancários salvos (${mensagemPartes.join(' e ')}).`,
       });
-      await carregarMovimentacoes(dataReferencia);
+      await recarregarERecalcular(dataReferencia);
     } catch (error) {
       console.error('Erro ao registrar pagamentos bancários:', error);
       atualizarMensagem('banco', {
@@ -1067,7 +1100,7 @@ const SaldoDiarioPage: React.FC = () => {
             ? 'Saldo bancário atualizado com sucesso.'
             : `${registros.length} saldos bancários atualizados com sucesso.`,
       });
-      await carregarMovimentacoes(dataReferencia);
+      await recarregarERecalcular(dataReferencia);
     } catch (error) {
       console.error('Erro ao registrar saldos bancários:', error);
       atualizarMensagem('saldo', {
@@ -1126,7 +1159,7 @@ const SaldoDiarioPage: React.FC = () => {
         tipo: 'sucesso',
         texto: 'Pagamento por área atualizado com sucesso.',
       });
-      await carregarMovimentacoes(dataReferencia);
+      await recarregarERecalcular(dataReferencia);
     } catch (error) {
       console.error('Erro ao atualizar pagamento por área:', error);
       atualizarMensagem('area', {
@@ -1163,7 +1196,7 @@ const SaldoDiarioPage: React.FC = () => {
         tipo: 'sucesso',
         texto: 'Pagamento por área removido com sucesso.',
       });
-      await carregarMovimentacoes(dataReferencia);
+      await recarregarERecalcular(dataReferencia);
     } catch (error) {
       console.error('Erro ao excluir pagamento por área:', error);
       atualizarMensagem('area', {
@@ -1222,7 +1255,7 @@ const SaldoDiarioPage: React.FC = () => {
         tipo: 'sucesso',
         texto: 'Receita atualizada com sucesso.',
       });
-      await carregarMovimentacoes(dataReferencia);
+      await recarregarERecalcular(dataReferencia);
     } catch (error) {
       console.error('Erro ao atualizar receita:', error);
       atualizarMensagem('receita', {
@@ -1259,7 +1292,7 @@ const SaldoDiarioPage: React.FC = () => {
         tipo: 'sucesso',
         texto: 'Receita removida com sucesso.',
       });
-      await carregarMovimentacoes(dataReferencia);
+      await recarregarERecalcular(dataReferencia);
     } catch (error) {
       console.error('Erro ao excluir receita:', error);
       atualizarMensagem('receita', {
@@ -1318,7 +1351,7 @@ const SaldoDiarioPage: React.FC = () => {
         tipo: 'sucesso',
         texto: 'Pagamento por banco atualizado com sucesso.',
       });
-      await carregarMovimentacoes(dataReferencia);
+      await recarregarERecalcular(dataReferencia);
     } catch (error) {
       console.error('Erro ao atualizar pagamento por banco:', error);
       atualizarMensagem('banco', {
@@ -1355,7 +1388,7 @@ const SaldoDiarioPage: React.FC = () => {
         tipo: 'sucesso',
         texto: 'Pagamento bancário removido com sucesso.',
       });
-      await carregarMovimentacoes(dataReferencia);
+      await recarregarERecalcular(dataReferencia);
     } catch (error) {
       console.error('Erro ao excluir pagamento bancário:', error);
       atualizarMensagem('banco', {
@@ -1414,7 +1447,7 @@ const SaldoDiarioPage: React.FC = () => {
         tipo: 'sucesso',
         texto: 'Saldo bancário atualizado com sucesso.',
       });
-      await carregarMovimentacoes(dataReferencia);
+      await recarregarERecalcular(dataReferencia);
     } catch (error) {
       console.error('Erro ao atualizar saldo bancário:', error);
       atualizarMensagem('saldo', {
@@ -1451,7 +1484,7 @@ const SaldoDiarioPage: React.FC = () => {
         tipo: 'sucesso',
         texto: 'Saldo bancário removido com sucesso.',
       });
-      await carregarMovimentacoes(dataReferencia);
+      await recarregarERecalcular(dataReferencia);
     } catch (error) {
       console.error('Erro ao excluir saldo bancário:', error);
       atualizarMensagem('saldo', {
@@ -1537,7 +1570,7 @@ const SaldoDiarioPage: React.FC = () => {
       });
 
       setItensSelecionadosArea(new Set());
-      await carregarMovimentacoes(dataReferencia);
+      await recarregarERecalcular(dataReferencia);
     } catch (error) {
       console.error('Erro ao excluir pagamentos por área:', error);
       atualizarMensagem('area', {
@@ -1582,7 +1615,7 @@ const SaldoDiarioPage: React.FC = () => {
       });
 
       setItensSelecionadosReceita(new Set());
-      await carregarMovimentacoes(dataReferencia);
+      await recarregarERecalcular(dataReferencia);
     } catch (error) {
       console.error('Erro ao excluir receitas:', error);
       atualizarMensagem('receita', {
@@ -1627,7 +1660,7 @@ const SaldoDiarioPage: React.FC = () => {
       });
 
       setItensSelecionadosBanco(new Set());
-      await carregarMovimentacoes(dataReferencia);
+      await recarregarERecalcular(dataReferencia);
     } catch (error) {
       console.error('Erro ao excluir pagamentos por banco:', error);
       atualizarMensagem('banco', {
@@ -1672,7 +1705,7 @@ const SaldoDiarioPage: React.FC = () => {
       });
 
       setItensSelecionadosSaldo(new Set());
-      await carregarMovimentacoes(dataReferencia);
+      await recarregarERecalcular(dataReferencia);
     } catch (error) {
       console.error('Erro ao excluir saldos bancários:', error);
       atualizarMensagem('saldo', {

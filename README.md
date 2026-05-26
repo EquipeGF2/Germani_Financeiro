@@ -1,4 +1,4 @@
-# Financeiro
+# Financeiro - teste
 
 Sistema de gestão financeira com controle de pagamentos, receitas e saldos bancários.
 

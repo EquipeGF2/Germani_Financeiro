@@ -13,6 +13,7 @@ concurrency:
 jobs:
   backup:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     permissions:
       contents: write
       issues: write
@@ -38,11 +39,21 @@ jobs:
           done
           [ "$faltando" -eq 0 ]
 
+      # Versão fixa de propósito: é a rotina que guarda a única cópia dos dados,
+      # então nada aqui deve mudar sozinho. Para atualizar, troque a versão abaixo
+      # depois de conferir que `supabase db dump` mantém as mesmas flags.
       - name: Instalar Supabase CLI (binary)
+        env:
+          SUPABASE_CLI_VERSAO: '2.117.0'
         run: |
-          curl -L https://github.com/supabase/cli/releases/latest/download/supabase_linux_amd64.tar.gz -o /tmp/supabase.tar.gz
+          set -euo pipefail
+          curl -fL "https://github.com/supabase/cli/releases/download/v${SUPABASE_CLI_VERSAO}/supabase_linux_amd64.tar.gz" \
+            -o /tmp/supabase.tar.gz
           sudo tar -xzf /tmp/supabase.tar.gz -C /usr/local/bin supabase
-          supabase --version
+          instalada=$(supabase --version)
+          echo "Supabase CLI instalada: $instalada"
+          [ "$instalada" = "$SUPABASE_CLI_VERSAO" ] || {
+            echo "::error::Versão inesperada da CLI: $instalada (esperada $SUPABASE_CLI_VERSAO)"; exit 1; }
 
       - name: Linkar projeto Supabase
         run: supabase link --project-ref "$PROJECT_REF" --password "$SUPABASE_DB_PASSWORD"

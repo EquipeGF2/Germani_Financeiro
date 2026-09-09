@@ -47,8 +47,25 @@ jobs:
           SUPABASE_CLI_VERSAO: '2.117.0'
         run: |
           set -euo pipefail
-          curl -fL "https://github.com/supabase/cli/releases/download/v${SUPABASE_CLI_VERSAO}/supabase_linux_amd64.tar.gz" \
-            -o /tmp/supabase.tar.gz
+          base="https://github.com/supabase/cli/releases/download/v${SUPABASE_CLI_VERSAO}"
+          baixado=0
+
+          # Duas grafias de nome de artefato, porque a release versionada nem sempre
+          # usa a mesma do canal `latest`. O curl já repete em erro transitório (5xx).
+          for nome in "supabase_linux_amd64.tar.gz" \
+                      "supabase_${SUPABASE_CLI_VERSAO}_linux_amd64.tar.gz"; do
+            echo "Baixando $nome"
+            if curl -fL --retry 4 --retry-delay 5 --retry-all-errors \
+                 "$base/$nome" -o /tmp/supabase.tar.gz; then
+              baixado=1
+              break
+            fi
+            echo "Não foi possível baixar $nome; tentando a próxima grafia."
+          done
+
+          [ "$baixado" -eq 1 ] || {
+            echo "::error::Falha ao baixar a CLI da Supabase v${SUPABASE_CLI_VERSAO}"; exit 1; }
+
           sudo tar -xzf /tmp/supabase.tar.gz -C /usr/local/bin supabase
           instalada=$(supabase --version)
           echo "Supabase CLI instalada: $instalada"

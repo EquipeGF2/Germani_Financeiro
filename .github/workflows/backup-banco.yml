@@ -1,0 +1,143 @@
+name: Backup do banco (schema financas)
+
+on:
+  schedule:
+    # 06:00 UTC = 03:00 America/Sao_Paulo
+    - cron: '0 6 * * *'
+  workflow_dispatch:
+
+concurrency:
+  group: backup-banco
+  cancel-in-progress: false
+
+jobs:
+  backup:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: write
+      issues: write
+    env:
+      SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+      SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
+      PROJECT_REF: ${{ secrets.SUPABASE_PROJECT_REF }}
+      GPG_PASSPHRASE: ${{ secrets.BACKUP_GPG_PASSPHRASE }}
+      GH_TOKEN: ${{ github.token }}
+
+    steps:
+      - name: Checkout do código
+        uses: actions/checkout@v4
+
+      - name: Conferir segredos obrigatórios
+        run: |
+          faltando=0
+          for var in SUPABASE_ACCESS_TOKEN SUPABASE_DB_PASSWORD PROJECT_REF GPG_PASSPHRASE; do
+            if [ -z "${!var}" ]; then
+              echo "::error::Segredo ausente no repositório: $var"
+              faltando=1
+            fi
+          done
+          [ "$faltando" -eq 0 ]
+
+      # Versão fixa de propósito: é a rotina que guarda a única cópia dos dados,
+      # então nada aqui deve mudar sozinho. Para atualizar, troque a versão abaixo
+      # depois de conferir que `supabase db dump` mantém as mesmas flags.
+      - name: Instalar Supabase CLI (binary)
+        env:
+          SUPABASE_CLI_VERSAO: '2.117.0'
+        run: |
+          set -euo pipefail
+          curl -fL "https://github.com/supabase/cli/releases/download/v${SUPABASE_CLI_VERSAO}/supabase_linux_amd64.tar.gz" \
+            -o /tmp/supabase.tar.gz
+          sudo tar -xzf /tmp/supabase.tar.gz -C /usr/local/bin supabase
+          instalada=$(supabase --version)
+          echo "Supabase CLI instalada: $instalada"
+          [ "$instalada" = "$SUPABASE_CLI_VERSAO" ] || {
+            echo "::error::Versão inesperada da CLI: $instalada (esperada $SUPABASE_CLI_VERSAO)"; exit 1; }
+
+      - name: Linkar projeto Supabase
+        run: supabase link --project-ref "$PROJECT_REF" --password "$SUPABASE_DB_PASSWORD"
+
+      - name: Gerar dumps do schema financas
+        run: |
+          set -euo pipefail
+          mkdir -p backup
+          echo "DATA=$(date -u +%Y-%m-%d)" >> "$GITHUB_ENV"
+          supabase db dump --linked --password "$SUPABASE_DB_PASSWORD" \
+            --schema financas -f backup/estrutura.sql
+          supabase db dump --linked --password "$SUPABASE_DB_PASSWORD" \
+            --schema financas --data-only -f backup/dados.sql
+          ls -l backup
+
+      - name: Validar dumps antes de publicar
+        run: |
+          set -euo pipefail
+          test -s backup/estrutura.sql || { echo "::error::Dump de estrutura vazio"; exit 1; }
+          test -s backup/dados.sql || { echo "::error::Dump de dados vazio"; exit 1; }
+
+          # A estrutura precisa conter as tabelas centrais do sistema.
+          for tabela in usr_usuarios are_areas ban_bancos ctr_contas_receita \
+                        pag_pagamentos_area rec_receitas sdb_saldo_banco \
+                        pvs_semanas pvi_previsao_itens; do
+            grep -q "$tabela" backup/estrutura.sql || {
+              echo "::error::Tabela ausente no dump de estrutura: $tabela"; exit 1; }
+          done
+
+          # O dump de dados usa INSERT (--column-inserts): sem nenhum, algo falhou.
+          grep -qE '^INSERT INTO ' backup/dados.sql || {
+            echo "::error::Dump de dados não contém nenhum registro"; exit 1; }
+
+          echo "Registros no dump: $(grep -cE '^INSERT INTO ' backup/dados.sql)"
+
+      - name: Compactar e criptografar
+        run: |
+          set -euo pipefail
+          arquivo="financas-${DATA}.tar.gz"
+          tar -czf "$arquivo" -C backup estrutura.sql dados.sql
+          gpg --batch --yes --symmetric --cipher-algo AES256 \
+            --passphrase "$GPG_PASSPHRASE" -o "${arquivo}.gpg" "$arquivo"
+          rm -f "$arquivo"
+          rm -rf backup
+          echo "ARQUIVO=${arquivo}.gpg" >> "$GITHUB_ENV"
+          ls -lh "${arquivo}.gpg"
+
+      - name: Publicar backup como release
+        run: |
+          set -euo pipefail
+          tag="backup-${DATA}"
+          notas="Backup automático do schema \`financas\` (dump de estrutura + dados), criptografado com AES256.
+
+          Para restaurar, veja \`docs/BACKUP_RESTORE.md\`."
+
+          if gh release view "$tag" >/dev/null 2>&1; then
+            gh release upload "$tag" "$ARQUIVO" --clobber
+          else
+            gh release create "$tag" "$ARQUIVO" \
+              --title "Backup $DATA" \
+              --notes "$notas" \
+              --prerelease
+          fi
+
+      - name: Rotacionar backups antigos
+        run: python3 .github/scripts/rotacionar-backups.py
+
+      - name: Abrir issue em caso de falha
+        if: failure()
+        run: |
+          set -euo pipefail
+          abertas=$(gh issue list --label backup-falhou --state open --json number --jq 'length')
+          corpo="O workflow de backup do banco falhou em $(date -u +%Y-%m-%d\ %H:%M) UTC.
+
+          Execução: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+
+          Enquanto esta issue estiver aberta, novas falhas não abrem issues novas — elas viram comentários aqui."
+
+          if [ "$abertas" -gt 0 ]; then
+            numero=$(gh issue list --label backup-falhou --state open --json number --jq '.[0].number')
+            gh issue comment "$numero" --body "$corpo"
+          else
+            gh label create backup-falhou --color B60205 \
+              --description "Falha na rotina automática de backup" 2>/dev/null || true
+            gh issue create --title "Falha no backup do banco" \
+              --label backup-falhou --body "$corpo"
+          fi

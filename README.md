@@ -56,6 +56,7 @@ Sistema de gestão financeira com controle de pagamentos, receitas e saldos banc
 - [Banco de Dados](./docs/BANCO_DE_DADOS.md)
 - [Frontend](./docs/FRONTEND.md)
 - [Setup e Instalação](./docs/SETUP.md)
+- [Backup e Restore do Banco](./docs/BACKUP_RESTORE.md)
 
 ## ⚡ Quick Start
 

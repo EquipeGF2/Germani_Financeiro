@@ -16,7 +16,51 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # Em pull request NÃO se toca no banco: só confere os arquivos de migration.
+  validar:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout do código
+        uses: actions/checkout@v4
+
+      - name: Conferir arquivos de migration
+        run: |
+          set -euo pipefail
+          diretorio=supabase/migrations
+          falhas=0
+
+          for arquivo in "$diretorio"/*.sql; do
+            nome=$(basename "$arquivo")
+            if ! printf '%s' "$nome" | grep -qE '^[0-9]{12,14}_[A-Za-z0-9_]+\.sql$'; then
+              echo "::error file=$arquivo::Nome fora do padrão AAAAMMDDHHMMSS_descricao.sql"
+              falhas=1
+            fi
+            if [ ! -s "$arquivo" ]; then
+              echo "::error file=$arquivo::Migration vazia"
+              falhas=1
+            fi
+          done
+
+          duplicados=$(ls "$diretorio" | sed -E 's/_.*//' | sort | uniq -d)
+          if [ -n "$duplicados" ]; then
+            echo "::error::Prefixos de migration duplicados: $duplicados"
+            falhas=1
+          fi
+
+          [ "$falhas" -eq 0 ]
+          echo "Migrations conferidas: $(ls "$diretorio"/*.sql | wc -l)"
+
+      - name: Aviso sobre aplicação das migrations
+        run: |
+          echo "As migrations só são aplicadas no banco após o merge em main."
+
   deploy:
+    # Só aplica no banco de produção depois do merge em main.
+    if: github.event_name == 'push'
     runs-on: ubuntu-latest
     permissions:
       contents: read

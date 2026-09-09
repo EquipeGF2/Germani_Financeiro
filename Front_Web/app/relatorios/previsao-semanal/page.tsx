@@ -372,6 +372,8 @@ const RelatorioPrevisaoSemanalPage: React.FC = () => {
         // Demais dias: saldo acumulado anterior + saldo diário calculado
         let saldoAcumulado: ReportRow | null = null;
         if (saldoInicial && saldoDiario) {
+          // Referência estável para o saldo inicial importado (a variável é reatribuída adiante).
+          const saldoInicialBase = saldoInicial;
           const valores: Record<string, number> = {};
           let saldoAnterior = 0;
 
@@ -380,7 +382,7 @@ const RelatorioPrevisaoSemanalPage: React.FC = () => {
 
             if (index === 0) {
               // Primeiro dia: saldo inicial + saldo diário calculado
-              const saldoInicialDia = saldoInicial.valores[data] ?? 0;
+              const saldoInicialDia = saldoInicialBase.valores[data] ?? 0;
               valores[data] = Math.round((saldoInicialDia + saldoDiarioCalculado) * 100) / 100;
             } else {
               // Demais dias: saldo acumulado anterior + saldo diário calculado
@@ -391,7 +393,7 @@ const RelatorioPrevisaoSemanalPage: React.FC = () => {
 
           // Total: saldo inicial do primeiro registro + soma de todos os saldos diários
           const primeiraData = datasOrdenadas[0];
-          const saldoInicialPrimeiro = primeiraData ? (saldoInicial.valores[primeiraData] ?? 0) : 0;
+          const saldoInicialPrimeiro = primeiraData ? (saldoInicialBase.valores[primeiraData] ?? 0) : 0;
           const somaSaldosDiarios = datasOrdenadas.reduce((sum, data) =>
             sum + (saldoDiario.valores[data] ?? 0), 0
           );
@@ -401,6 +403,32 @@ const RelatorioPrevisaoSemanalPage: React.FC = () => {
             categoria: 'Saldo acumulado previsto',
             valores,
             total,
+          };
+        }
+
+        // Saldo inicial exibido dia a dia:
+        // - Primeiro dia: saldo inicial importado da planilha (ou saldo bancário do fallback)
+        // - Demais dias: saldo final (acumulado) do dia anterior
+        if (saldoInicial && saldoAcumulado) {
+          const primeiraData = datasOrdenadas[0];
+          const aberturaSemana = primeiraData ? (saldoInicial.valores[primeiraData] ?? 0) : 0;
+
+          const valoresAbertura = datasOrdenadas.reduce<Record<string, number>>((acc, data, index) => {
+            if (index === 0) {
+              acc[data] = aberturaSemana;
+            } else {
+              const dataAnterior = datasOrdenadas[index - 1];
+              acc[data] = saldoAcumulado?.valores[dataAnterior] ?? 0;
+            }
+            return acc;
+          }, {});
+
+          saldoInicial = {
+            categoria: saldoInicial.categoria,
+            valores: valoresAbertura,
+            // Total da linha permanece sendo a abertura da semana: somar as aberturas
+            // diárias não teria significado financeiro e alimentaria o card "Saldo Inicial".
+            total: aberturaSemana,
           };
         }
 
